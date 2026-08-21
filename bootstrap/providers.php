@@ -2,8 +2,10 @@
 
 use App\Providers\AppServiceProvider;
 use App\Providers\FortifyServiceProvider;
+use App\Providers\SyncServiceProvider;
 
 return [
     AppServiceProvider::class,
     FortifyServiceProvider::class,
+    SyncServiceProvider::class,
 ];

@@ -158,20 +158,28 @@ return [
     | by removing them from this array. You're free to only remove some of
     | these features, or you can even remove all of these if you need to.
     |
+    | Email verification, password reset, and 2FA are cloud-only: they all
+    | assume a mail server (or, for 2FA setup, a predictable clock a laptop
+    | offline for days doesn't have) that a laptop install can't rely on.
+    | Reading APP_MODE directly, not sync_is_local() — this file loads
+    | during LoadConfiguration, before config/sync.php exists in the
+    | repository or facades are wired up. See App\Sync\LocalDatabasePath
+    | for the same constraint.
+    |
     */
 
-    'features' => [
+    'features' => array_values(array_filter([
         Features::registration(),
-        Features::resetPasswords(),
-        Features::emailVerification(),
-        Features::twoFactorAuthentication([
+        env('APP_MODE', 'local') === 'cloud' ? Features::resetPasswords() : null,
+        env('APP_MODE', 'local') === 'cloud' ? Features::emailVerification() : null,
+        env('APP_MODE', 'local') === 'cloud' ? Features::twoFactorAuthentication([
             'confirm' => true,
             'confirmPassword' => true,
             // 'window' => 0
-        ]),
+        ]) : null,
         Features::passkeys([
             'confirmPassword' => true,
         ]),
-    ],
+    ])),
 
 ];

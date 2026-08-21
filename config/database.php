@@ -1,5 +1,6 @@
 <?php
 
+use App\Sync\LocalDatabasePath;
 use Illuminate\Support\Str;
 use Pdo\Mysql;
 
@@ -35,11 +36,18 @@ return [
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DB_URL'),
-            'database' => env('DB_DATABASE', database_path('database.sqlite')),
+            // Local mode (a laptop install): %LOCALAPPDATA%, never Documents/Desktop
+            // — see App\Sync\LocalDatabasePath. Cloud mode / CI without LOCALAPPDATA
+            // fall back to the project's database/ folder.
+            'database' => env('DB_DATABASE') ?: (
+                env('APP_MODE', 'local') === 'local'
+                    ? LocalDatabasePath::resolve((string) env('APP_NAME', 'laravel'))
+                    : database_path('database.sqlite')
+            ),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),
+            'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
             'synchronous' => null,
             'transaction_mode' => 'DEFERRED',
         ],
