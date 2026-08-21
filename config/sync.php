@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\Customer;
+use App\Sync\Scopes\OwnerScope;
+
 return [
 
     /*
@@ -41,7 +44,12 @@ return [
     */
 
     'entities' => [
-
+        'customer' => [
+            'model' => Customer::class,
+            'table' => 'customers',
+            'scope' => OwnerScope::class,
+            'fields' => ['code', 'name', 'email', 'phone', 'city', 'notes', 'status', 'owner_user_id'],
+        ],
     ],
 
 ];
