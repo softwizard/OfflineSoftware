@@ -47,6 +47,14 @@ class Customer extends Model implements SyncableModel
             if (sync_is_local() && ! $customer->code) {
                 $customer->code = CodeGenerator::next(self::CODE_PREFIX);
             }
+            // Same DB-side-default-only problem as version below: without
+            // this, a create() that doesn't explicitly pass 'status' leaves
+            // the in-memory attribute null even though the persisted row
+            // correctly defaults to 'active' — and that null then gets read
+            // straight back out by toWirePayload() (§A7's canonical row) and
+            // pushed over the wire, which a NOT NULL status column rejects
+            // the moment anything tries to reapply it.
+            $customer->status ??= 'active';
             // The migration's default(1) is a DB-side default only — Eloquent
             // never re-fetches after insert for a UUID (non-autoincrement)
             // key, so without this the in-memory model's version stays null

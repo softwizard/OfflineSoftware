@@ -215,6 +215,11 @@ trait Syncable
         return $this->version;
     }
 
+    public function setVersion(int $version): void
+    {
+        $this->version = $version;
+    }
+
     /**
      * @return array<string, mixed>
      */

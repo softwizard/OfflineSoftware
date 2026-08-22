@@ -34,6 +34,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Server Connection
+    |--------------------------------------------------------------------------
+    |
+    | Set only in local mode. device_token is issued by POST /api/sync/register
+    | (see App\Console\Commands\SyncRegister) and stored back into .env —
+    | there's no database column for it, matching how SYNC_DEVICE_ID itself
+    | is bootstrapped.
+    |
+    */
+
+    'server_url' => env('SYNC_SERVER_URL'),
+    'device_token' => env('SYNC_DEVICE_TOKEN'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Schema Version
     |--------------------------------------------------------------------------
     |

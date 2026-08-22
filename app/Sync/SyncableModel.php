@@ -13,6 +13,8 @@ interface SyncableModel
 {
     public function getVersion(): int;
 
+    public function setVersion(int $version): void;
+
     /**
      * @return array<string, mixed>
      */
@@ -28,4 +30,26 @@ interface SyncableModel
      * through a dynamically resolved $modelClass.
      */
     public static function findIncludingTrashed(string $id): ?self;
+
+    /**
+     * trashed()/restore()/forceDelete() come from the SoftDeletes trait,
+     * not bare Model — same reasoning as findIncludingTrashed() above.
+     * Every syncable entity is expected to use SoftDeletes (the tombstone
+     * -based sync design depends on it structurally, not optionally), so
+     * requiring these here is documenting an existing constraint, not
+     * adding a new one. No *declared* return types, matching SoftDeletes'
+     * own (undeclared) signatures — declaring one here that the trait's
+     * actual methods don't have would make every implementer's inherited
+     * method incompatible with this interface. The @return docblocks below
+     * are for Larastan only; they don't affect that compatibility check.
+     */
+
+    /** @return bool */
+    public function trashed();
+
+    /** @return bool */
+    public function restore();
+
+    /** @return bool|null */
+    public function forceDelete();
 }
