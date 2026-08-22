@@ -22,3 +22,6 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+
+# S6-07 — mysqldump output. Contains real customer data; never committed.
+/scripts/backups

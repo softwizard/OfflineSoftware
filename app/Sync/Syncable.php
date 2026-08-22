@@ -35,6 +35,8 @@ trait Syncable
     public static function bootSyncable(): void
     {
         static::creating(function ($model) {
+            static::guardOfflineLock();
+
             // ConflictResolver (S4-01) needs to know the client_updated_at
             // /origin_device behind a row's *current* value, not just its
             // version — set from the start, the same as on every later
@@ -47,6 +49,8 @@ trait Syncable
         });
 
         static::updating(function ($model) {
+            static::guardOfflineLock();
+
             // Cloud-side version is a server-owned counter, bumped on every
             // canonical write regardless of what triggered it (push or a
             // direct edit) — it's what base_version comparisons check
@@ -59,6 +63,10 @@ trait Syncable
                 $model->last_client_updated_at = SyncContext::clientUpdatedAt();
                 $model->last_origin_device = SyncContext::originDevice();
             }
+        });
+
+        static::deleting(function () {
+            static::guardOfflineLock();
         });
 
         static::created(function ($model) {
@@ -142,6 +150,20 @@ trait Syncable
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    /**
+     * S6-03 — only guards genuine local user writes. Cloud mode is never
+     * locked (sync_is_local() gate), and a remote apply (RemoteApplier,
+     * always inside Sync::withoutRecording — invariant 2) must never be
+     * blocked by this or a device could never recover: the pull that
+     * would un-lock it is itself a write.
+     */
+    protected static function guardOfflineLock(): void
+    {
+        if (sync_is_local() && Sync::isRecording()) {
+            app(OfflineLock::class)->assertWritable();
+        }
     }
 
     protected function coalesceSyncChanges(): void

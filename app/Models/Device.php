@@ -6,6 +6,7 @@ use Database\Factories\DeviceFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -17,6 +18,8 @@ use Laravel\Sanctum\HasApiTokens;
  * @property string|null $provisioning_code_hash
  * @property Carbon|null $provisioning_code_expires_at
  * @property Carbon|null $last_seen_at
+ * @property int|null $last_schema_version
+ * @property int $last_pulled_seq
  * @property Carbon|null $revoked_at
  *
  * Deliberately not Authenticatable and not registered as an auth guard
@@ -40,5 +43,13 @@ class Device extends Model
             'last_seen_at' => 'datetime',
             'revoked_at' => 'datetime',
         ];
+    }
+
+    /**
+     * @return BelongsTo<User, $this>
+     */
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
     }
 }

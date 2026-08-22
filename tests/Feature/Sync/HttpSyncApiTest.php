@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\Sync;
 
+use App\Sync\Api\DeviceRevokedException;
 use App\Sync\Api\HttpSyncApi;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Tests\TestCase;
@@ -81,6 +83,53 @@ class HttpSyncApiTest extends TestCase
         Http::fake(['*' => Http::response('', 204)]);
 
         $this->assertTrue($this->api()->ping());
+    }
+
+    public function test_a_401_device_revoked_response_throws_a_distinguishable_exception(): void
+    {
+        Sleep::fake();
+        Http::fake(['*' => Http::response(['error' => 'device_revoked'], 401)]);
+
+        $this->expectException(DeviceRevokedException::class);
+
+        $this->api()->handshake();
+    }
+
+    public function test_a_401_device_revoked_response_is_not_retried(): void
+    {
+        Sleep::fake();
+        Http::fake(['*' => Http::response(['error' => 'device_revoked'], 401)]);
+
+        try {
+            $this->api()->handshake();
+        } catch (DeviceRevokedException) {
+            // expected
+        }
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_an_ordinary_401_still_throws_the_generic_request_exception(): void
+    {
+        Http::fake(['*' => Http::response(['error' => 'unauthenticated'], 401)]);
+
+        try {
+            $this->api()->handshake();
+            $this->fail('Expected an exception.');
+        } catch (DeviceRevokedException $e) {
+            $this->fail('A plain unauthenticated 401 must not be mistaken for a revocation: '.$e->getMessage());
+        } catch (\Throwable $e) {
+            $this->assertInstanceOf(RequestException::class, $e);
+        }
+    }
+
+    public function test_snapshot_hits_the_expected_endpoint(): void
+    {
+        Http::fake(['*/api/sync/snapshot' => Http::response(['entities' => [], 'cursor' => 0])]);
+
+        $this->api()->snapshot();
+
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/api/sync/snapshot'));
     }
 
     public function test_push_and_pull_hit_the_expected_endpoints(): void

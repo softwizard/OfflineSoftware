@@ -2,6 +2,7 @@
 
 use App\Http\Requests\CustomerRequest;
 use App\Models\Customer;
+use App\Sync\OfflineLockException;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -61,13 +62,19 @@ new #[Title('Customers')] class extends Component {
     {
         $validated = $this->validate((new CustomerRequest)->rulesForForm());
 
-        DB::transaction(function () use ($validated) {
-            if ($this->editingId) {
-                Customer::findOrFail($this->editingId)->update($validated);
-            } else {
-                Customer::create($validated + ['owner_user_id' => Auth::id()]);
-            }
-        });
+        try {
+            DB::transaction(function () use ($validated) {
+                if ($this->editingId) {
+                    Customer::findOrFail($this->editingId)->update($validated);
+                } else {
+                    Customer::create($validated + ['owner_user_id' => Auth::id()]);
+                }
+            });
+        } catch (OfflineLockException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        }
 
         Flux::modal('customer-form')->close();
         Flux::toast(variant: 'success', text: __('Saved.'));
@@ -76,9 +83,15 @@ new #[Title('Customers')] class extends Component {
 
     public function delete(string $id): void
     {
-        DB::transaction(function () use ($id) {
-            Customer::findOrFail($id)->delete();
-        });
+        try {
+            DB::transaction(function () use ($id) {
+                Customer::findOrFail($id)->delete();
+            });
+        } catch (OfflineLockException $e) {
+            Flux::toast(variant: 'danger', text: $e->getMessage());
+
+            return;
+        }
 
         Flux::toast(variant: 'success', text: __('Customer deleted.'));
     }

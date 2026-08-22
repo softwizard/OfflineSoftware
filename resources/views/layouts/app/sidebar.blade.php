@@ -29,6 +29,9 @@
                         <flux:sidebar.item icon="layout-grid" :href="route('sync.conflicts')" :current="request()->routeIs('sync.conflicts')" wire:navigate>
                             {{ __('Sync Conflicts') }}
                         </flux:sidebar.item>
+                        <flux:sidebar.item icon="layout-grid" :href="route('sync.fleet')" :current="request()->routeIs('sync.fleet')" wire:navigate>
+                            {{ __('Device Fleet') }}
+                        </flux:sidebar.item>
                     @endif
                 </flux:sidebar.group>
             </flux:sidebar.nav>

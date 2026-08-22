@@ -2,6 +2,7 @@
 
 namespace App\Sync;
 
+use App\Sync\Api\DeviceRevokedException;
 use App\Sync\Api\SyncApi;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ class SyncRunner
         protected PushRunner $pushRunner,
         protected PullRunner $pullRunner,
         protected Backoff $backoff,
+        protected SyncWipe $wipe,
     ) {}
 
     /**
@@ -70,6 +72,12 @@ class SyncRunner
             // PullRunner, since "last success" means a full cycle
             // completed, not just that one stage happened to finish.
             DB::table('sync_state')->where('id', 1)->update(['last_success_at' => now()]);
+        } catch (DeviceRevokedException $e) {
+            // S6-04 — "after one cycle": the wipe happens right here, the
+            // moment any stage's request comes back revoked, not as a
+            // separate step an operator has to remember to run.
+            $this->wipe->wipe();
+            $this->finish($runId, 'revoked', $stage, $e->getMessage());
         } catch (Throwable $e) {
             $this->finish($runId, 'failed', $stage, $e->getMessage());
         }

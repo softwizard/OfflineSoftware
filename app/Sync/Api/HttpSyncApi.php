@@ -40,6 +40,11 @@ class HttpSyncApi implements SyncApi
         return $this->client()->get('/api/sync/pull', ['since' => $since, 'limit' => $limit])->throw()->json();
     }
 
+    public function snapshot(): array
+    {
+        return $this->client()->get('/api/sync/snapshot')->throw()->json();
+    }
+
     protected function client(): PendingRequest
     {
         return Http::baseUrl($this->baseUrl)
@@ -51,6 +56,16 @@ class HttpSyncApi implements SyncApi
             // 409 schema_outdated would get retried 3 times for nothing;
             // it needs a new client build, not a resend. Only a genuine
             // ConnectionException (DNS, dropped connection, refused) retries.
-            ->retry(3, 1000, fn (Throwable $e) => $e instanceof ConnectionException);
+            ->retry(3, 1000, fn (Throwable $e) => $e instanceof ConnectionException)
+            // S6-04 — throw()'s callback runs before the original
+            // RequestException is thrown (Response::throw() tap()s it); a
+            // callback that itself throws replaces it entirely, so a
+            // revoked device gets a distinguishable exception instead of
+            // just another generic 401.
+            ->throw(function ($response) {
+                if ($response->status() === 401 && $response->json('error') === 'device_revoked') {
+                    throw new DeviceRevokedException('This device has been revoked by the server.');
+                }
+            });
     }
 }

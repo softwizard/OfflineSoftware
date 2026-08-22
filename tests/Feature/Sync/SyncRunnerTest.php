@@ -142,6 +142,30 @@ class SyncRunnerTest extends TestCase
         $this->assertTrue(app(SyncRunner::class)->run());
     }
 
+    public function test_a_revoked_device_gets_its_local_data_wiped_within_one_cycle(): void
+    {
+        $owner = User::factory()->create();
+        Customer::create(['name' => 'Acme', 'owner_user_id' => $owner->id]);
+
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (str_contains($url, '/api/sync/ping')) {
+                return Http::response('', 204);
+            }
+
+            return Http::response(['error' => 'device_revoked'], 401); // handshake, and anything after
+        });
+
+        app(SyncRunner::class)->run();
+
+        $this->assertSame(0, Customer::withTrashed()->count());
+        $this->assertSame(0, DB::table('sync_changes')->count());
+
+        $run = DB::table('sync_runs')->latest('id')->first();
+        $this->assertSame('revoked', $run->status);
+    }
+
     public function test_skips_without_running_while_backoff_is_active(): void
     {
         DB::table('sync_runs')->insert([

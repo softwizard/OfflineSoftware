@@ -46,9 +46,18 @@ class PullController extends Controller
             'version' => $row->version,
         ])->all();
 
+        $cursor = $rows->isNotEmpty() ? (int) $rows->last()->seq : $since;
+
+        // S6-05 — the fleet dashboard's "backlog" column reads this back;
+        // max() because pages can be requested out of order by a retry and
+        // this must never move backwards.
+        if ($cursor > $device->last_pulled_seq) {
+            $device->forceFill(['last_pulled_seq' => $cursor])->save();
+        }
+
         return response()->json([
             'changes' => $changes,
-            'cursor' => $rows->isNotEmpty() ? (int) $rows->last()->seq : $since,
+            'cursor' => $cursor,
         ]);
     }
 }

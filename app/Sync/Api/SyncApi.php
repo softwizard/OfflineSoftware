@@ -27,4 +27,11 @@ interface SyncApi
      * @return array<string, mixed>
      */
     public function pull(int $since, int $limit = 500): array;
+
+    /**
+     * S6-01 — a full scoped read for provisioning, not incremental pull.
+     *
+     * @return array<string, mixed>
+     */
+    public function snapshot(): array;
 }

@@ -3,6 +3,7 @@
 namespace App\Livewire\Sync;
 
 use App\Sync\Connectivity;
+use App\Sync\OfflineLock;
 use App\Sync\SyncRunner;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
@@ -38,11 +39,25 @@ class StatusBar extends Component
         return DB::table('sync_state')->where('id', 1)->value('last_success_at');
     }
 
+    /**
+     * S6-03 — "countdown from day 10." Read fresh on every poll rather
+     * than cached, same as the other computed properties here: this is
+     * exactly the kind of thing a page left open for days must not show
+     * stale.
+     *
+     * @return array{locked: bool, warning: bool, days_offline: ?int, days_remaining: ?int}
+     */
+    #[Computed]
+    public function offlineLock(): array
+    {
+        return app(OfflineLock::class)->status();
+    }
+
     public function syncNow(): void
     {
         app(SyncRunner::class)->run();
 
-        unset($this->online, $this->pendingCount, $this->lastSuccessAt);
+        unset($this->online, $this->pendingCount, $this->lastSuccessAt, $this->offlineLock);
     }
 
     public function render(): View
