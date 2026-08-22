@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Sync\Api\HttpSyncApi;
 use App\Sync\Api\SyncApi;
 use App\Sync\DeviceIdentity;
+use App\Sync\LocalDatabasePath;
 use Illuminate\Support\ServiceProvider;
 
 class SyncServiceProvider extends ServiceProvider
@@ -21,7 +22,10 @@ class SyncServiceProvider extends ServiceProvider
 
     /**
      * Fail loudly, not silently: a local install with no device identity
-     * must not boot far enough to write data under a blank origin_device.
+     * must not boot far enough to write data under a blank origin_device
+     * (§S6-06 area), and one whose LOCALAPPDATA is OneDrive-redirected
+     * must not boot far enough to write a WAL-mode SQLite file into a
+     * synced folder and corrupt it (S7-02).
      */
     public function boot(): void
     {
@@ -30,6 +34,7 @@ class SyncServiceProvider extends ServiceProvider
 
         if (sync_is_local()) {
             DeviceIdentity::id();
+            LocalDatabasePath::assertNotOneDriveRedirected();
         }
     }
 
