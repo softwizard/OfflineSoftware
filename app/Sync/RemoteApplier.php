@@ -18,6 +18,14 @@ use Illuminate\Database\Eloquent\Model;
  * a record this device currently holds as trashed means the canonical
  * record exists and isn't deleted, so it gets restored as part of the
  * upsert.
+ *
+ * Every apply is version-gated (skip if the local row is already at or
+ * past the incoming version) — found live, not in a unit test: a device
+ * whose own edit just won a conflict resolution never sees that winning
+ * log entry on its own next pull (excluded as its own origin), but an
+ * earlier, now-superseded entry from the OTHER device is still in the
+ * same page and would otherwise be applied right over the device's
+ * already-correct state, regressing it back to the losing value.
  */
 class RemoteApplier
 {
@@ -31,6 +39,10 @@ class RemoteApplier
 
             /** @var (Model&SyncableModel)|null $model */
             $model = $modelClass::findIncludingTrashed($entityId);
+
+            if ($model && $version !== null && $model->getVersion() >= $version) {
+                return; // already at or past this log entry — stale, skip it
+            }
 
             if ($op === 'delete') {
                 $model?->delete(); // tombstone — soft delete locally too

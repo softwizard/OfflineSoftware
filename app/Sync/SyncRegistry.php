@@ -57,7 +57,18 @@ class SyncRegistry
     }
 
     /**
-     * @return array{model: class-string<Model&SyncableModel>, table: string, scope: class-string<ScopeDefinition>, fields: array<int, string>}
+     * A6 — fields with no DB unique index, flagged for review on collision
+     * instead. Optional per entity; defaults to none.
+     *
+     * @return array<int, string>
+     */
+    public static function softUnique(string $entity): array
+    {
+        return static::entry($entity)['soft_unique'] ?? [];
+    }
+
+    /**
+     * @return array{model: class-string<Model&SyncableModel>, table: string, scope: class-string<ScopeDefinition>, fields: array<int, string>, soft_unique?: array<int, string>}
      */
     protected static function entry(string $entity): array
     {

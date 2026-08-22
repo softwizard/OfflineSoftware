@@ -79,10 +79,44 @@ class PushControllerTest extends CloudTestCase
         $this->assertSame(1, DB::table('sync_receipts')->count());
     }
 
-    public function test_update_with_a_stale_base_version_is_held_as_a_conflict_and_not_applied(): void
+    public function test_stale_base_version_where_current_is_newer_is_held_as_a_conflict(): void
+    {
+        // Sprint 2's "always hold" is gone — ConflictResolver actually
+        // picks a winner now. This is the LWW-says-current-wins branch:
+        // the row's last real edit is more recent than the incoming one.
+        [$device, $owner, $token] = $this->authedDevice();
+        $customer = Customer::create(['code' => 'CUST-TEST-000001', 'name' => 'Original', 'owner_user_id' => $owner->id]);
+        DB::table('customers')->where('id', $customer->id)->update([
+            'last_client_updated_at' => SyncTime::wire(now()),
+            'last_origin_device' => 'D99',
+        ]);
+
+        $response = $this->pushRequest($token, [[
+            'id' => (string) Str::uuid7(),
+            'entity' => 'customer',
+            'entity_id' => $customer->id,
+            'op' => 'update',
+            'base_version' => 999,
+            'client_updated_at' => SyncTime::wire(now()->subHour()),
+            'origin_device' => $device->device_code,
+            'payload' => ['name' => 'Changed'],
+        ]]);
+
+        $response->assertJsonPath('results.0.outcome', 'conflict');
+        $response->assertJsonPath('results.0.row.name', 'Original');
+        $this->assertSame('Original', $customer->fresh()->name);
+        $this->assertSame(1, DB::table('sync_conflicts')->count());
+        $this->assertSame('current', DB::table('sync_conflicts')->value('winner'));
+    }
+
+    public function test_stale_base_version_where_incoming_is_newer_wins_and_applies(): void
     {
         [$device, $owner, $token] = $this->authedDevice();
         $customer = Customer::create(['code' => 'CUST-TEST-000001', 'name' => 'Original', 'owner_user_id' => $owner->id]);
+        DB::table('customers')->where('id', $customer->id)->update([
+            'last_client_updated_at' => SyncTime::wire(now()->subHour()),
+            'last_origin_device' => 'D99',
+        ]);
 
         $response = $this->pushRequest($token, [[
             'id' => (string) Str::uuid7(),
@@ -95,10 +129,10 @@ class PushControllerTest extends CloudTestCase
             'payload' => ['name' => 'Changed'],
         ]]);
 
-        $response->assertJsonPath('results.0.outcome', 'conflict');
-        $response->assertJsonPath('results.0.row.name', 'Original');
-        $this->assertSame('Original', $customer->fresh()->name);
+        $response->assertJsonPath('results.0.outcome', 'applied');
+        $this->assertSame('Changed', $customer->fresh()->name);
         $this->assertSame(1, DB::table('sync_conflicts')->count());
+        $this->assertSame('incoming', DB::table('sync_conflicts')->value('winner'));
     }
 
     public function test_update_with_the_correct_base_version_applies_and_bumps_version(): void

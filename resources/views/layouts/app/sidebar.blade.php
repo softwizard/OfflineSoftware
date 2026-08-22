@@ -15,6 +15,12 @@
                     <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Dashboard') }}
                     </flux:sidebar.item>
+
+                    @if (sync_is_cloud())
+                        <flux:sidebar.item icon="layout-grid" :href="route('sync.conflicts')" :current="request()->routeIs('sync.conflicts')" wire:navigate>
+                            {{ __('Sync Conflicts') }}
+                        </flux:sidebar.item>
+                    @endif
                 </flux:sidebar.group>
             </flux:sidebar.nav>
 

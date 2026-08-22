@@ -80,6 +80,11 @@ return [
             'table' => 'customers',
             'scope' => OwnerScope::class,
             'fields' => ['code', 'name', 'email', 'phone', 'city', 'notes', 'status', 'owner_user_id'],
+            // A6 — no unique index on these; flagged for review instead
+            // (DuplicateDetector) when two records collide. 'code' is
+            // deliberately excluded: it's system-generated, not
+            // user-entered, and does carry a real unique index (§3.1).
+            'soft_unique' => ['email'],
         ],
     ],
 

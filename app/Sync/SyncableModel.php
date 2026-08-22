@@ -16,6 +16,16 @@ interface SyncableModel
     public function setVersion(int $version): void;
 
     /**
+     * ConflictResolver's "current" side (S4-01) — the client_updated_at
+     * /origin_device behind the row's current value, tracked by Syncable
+     * on every cloud-side write. Null only for a row from before this
+     * tracking existed, or a direct edit with no device context at all.
+     */
+    public function getLastClientUpdatedAt(): ?string;
+
+    public function getLastOriginDevice(): ?string;
+
+    /**
      * @return array<string, mixed>
      */
     public function toWirePayload(): array;

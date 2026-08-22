@@ -34,6 +34,18 @@ trait Syncable
      */
     public static function bootSyncable(): void
     {
+        static::creating(function ($model) {
+            // ConflictResolver (S4-01) needs to know the client_updated_at
+            // /origin_device behind a row's *current* value, not just its
+            // version — set from the start, the same as on every later
+            // update, so the very first edit has something real to compare
+            // against instead of nulls.
+            if (sync_is_cloud()) {
+                $model->last_client_updated_at = SyncContext::clientUpdatedAt();
+                $model->last_origin_device = SyncContext::originDevice();
+            }
+        });
+
         static::updating(function ($model) {
             // Cloud-side version is a server-owned counter, bumped on every
             // canonical write regardless of what triggered it (push or a
@@ -44,12 +56,15 @@ trait Syncable
             // a laptop's own edits don't change what "canonical" means.
             if (sync_is_cloud() && $model->isDirty()) {
                 $model->version = ($model->getOriginal('version') ?? 0) + 1;
+                $model->last_client_updated_at = SyncContext::clientUpdatedAt();
+                $model->last_origin_device = SyncContext::originDevice();
             }
         });
 
         static::created(function ($model) {
             if (sync_is_cloud()) {
                 $model->logSyncChange('create', $model->getAttributes());
+                $model->checkForDuplicates();
 
                 return;
             }
@@ -61,6 +76,7 @@ trait Syncable
         static::updated(function ($model) {
             if (sync_is_cloud()) {
                 $model->logSyncChange('update', $model->getChanges());
+                $model->checkForDuplicates();
 
                 return;
             }
@@ -135,6 +151,21 @@ trait Syncable
         }
 
         ChangeCoalescer::coalesce(SyncRegistry::keyForModel($this), $this->getKey());
+    }
+
+    protected function checkForDuplicates(): void
+    {
+        if (! Sync::isRecording()) {
+            return;
+        }
+
+        $entity = SyncRegistry::keyForModel($this);
+
+        if (empty(SyncRegistry::softUnique($entity))) {
+            return;
+        }
+
+        app(DuplicateDetector::class)->check($entity, (string) $this->getKey());
     }
 
     /**
@@ -218,6 +249,16 @@ trait Syncable
     public function setVersion(int $version): void
     {
         $this->version = $version;
+    }
+
+    public function getLastClientUpdatedAt(): ?string
+    {
+        return $this->last_client_updated_at;
+    }
+
+    public function getLastOriginDevice(): ?string
+    {
+        return $this->last_origin_device;
     }
 
     /**

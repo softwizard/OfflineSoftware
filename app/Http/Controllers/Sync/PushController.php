@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Sync;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CustomerRequest;
 use App\Models\Device;
+use App\Sync\ConflictResolver;
 use App\Sync\SyncableModel;
 use App\Sync\SyncContext;
 use App\Sync\SyncRegistry;
@@ -26,6 +27,7 @@ class PushController extends Controller
             'changes.*.entity_id' => ['required', 'uuid'],
             'changes.*.op' => ['required', 'in:create,update,delete'],
             'changes.*.base_version' => ['nullable', 'integer'],
+            'changes.*.client_updated_at' => ['required', 'string'],
             'changes.*.payload' => ['required', 'array'],
         ]);
 
@@ -103,8 +105,10 @@ class PushController extends Controller
             return $result + ['outcome' => 'rejected', 'errors' => ['entity_id' => 'no such record']];
         }
 
+        $originDevice = $change['origin_device'] ?? $device->device_code;
+
         if ($change['op'] !== 'create' && (int) $change['base_version'] !== $row->getVersion()) {
-            return $this->recordConflict($change, $row, $device);
+            return $this->resolveConflict($change, $modelClass, $row, $originDevice);
         }
 
         try {
@@ -115,55 +119,114 @@ class PushController extends Controller
             return $result + ['outcome' => 'rejected', 'errors' => $e->errors()];
         }
 
-        return SyncContext::withOriginDevice($change['origin_device'] ?? $device->device_code, function () use ($change, $modelClass, $row, $validated, $result) {
-            if ($change['op'] === 'create') {
-                /** @var Model&SyncableModel $model */
-                $model = new $modelClass($validated);
-                $model->setAttribute($model->getKeyName(), $change['entity_id']);
-                $model->save();
-            } elseif ($change['op'] === 'update') {
-                $model = $row->fill($validated);
-                $model->save();
-            } else {
-                $model = $row;
-                $model->delete();
-            }
-
-            return $result + ['outcome' => 'applied', 'row' => $model->toWirePayload(), 'version' => $model->getVersion()];
-        });
+        return $this->applyValidated($change, $modelClass, $row, $validated, $originDevice);
     }
 
     /**
-     * §7 recommendation: detect and hold. Sprint 4's ConflictResolver picks
-     * a winner (LWW + clock-skew guard); this just makes sure nothing is
-     * silently overwritten or lost in the meantime.
-     *
      * @param  array<string, mixed>  $change
+     * @param  class-string<Model&SyncableModel>  $modelClass
+     * @param  array<string, mixed>  $validated
      * @return array<string, mixed>
      */
-    protected function recordConflict(array $change, Model&SyncableModel $row, Device $device): array
+    protected function applyValidated(array $change, string $modelClass, ?Model $existingRow, array $validated, string $originDevice): array
     {
+        return SyncContext::withOriginDevice($originDevice, fn () => SyncContext::withClientUpdatedAt(
+            $change['client_updated_at'],
+            function () use ($change, $modelClass, $existingRow, $validated) {
+                if ($change['op'] === 'create') {
+                    /** @var Model&SyncableModel $model */
+                    $model = new $modelClass($validated);
+                    $model->setAttribute($model->getKeyName(), $change['entity_id']);
+                    $model->save();
+                } elseif ($change['op'] === 'update') {
+                    /** @var Model&SyncableModel $model */
+                    $model = $existingRow;
+                    $model->fill($validated);
+                    $model->save();
+                } else {
+                    /** @var Model&SyncableModel $model */
+                    $model = $existingRow;
+                    $model->delete();
+                }
+
+                return [
+                    'id' => $change['id'],
+                    'entity_id' => $change['entity_id'],
+                    'outcome' => 'applied',
+                    'row' => $model->toWirePayload(),
+                    'version' => $model->getVersion(),
+                ];
+            },
+        ));
+    }
+
+    /**
+     * S4-01/S4-02 — ConflictResolver always picks a winner (LWW, delete
+     * -beats-update, A8 skew guard); this records both payloads either
+     * way and, only when the incoming side actually wins, applies it —
+     * the "detect and hold" placeholder from Sprint 2 is gone.
+     *
+     * @param  array<string, mixed>  $change
+     * @param  class-string<Model&SyncableModel>  $modelClass
+     * @return array<string, mixed>
+     */
+    protected function resolveConflict(array $change, string $modelClass, Model&SyncableModel $row, string $originDevice): array
+    {
+        $resolution = app(ConflictResolver::class)->resolve(
+            $change['op'],
+            $change['client_updated_at'],
+            $originDevice,
+            (bool) $row->trashed(),
+            $row->getLastClientUpdatedAt(),
+            $row->getLastOriginDevice(),
+            now(),
+        );
+
         DB::table('sync_conflicts')->insert([
             'id' => (string) Str::uuid7(),
             'entity' => $change['entity'],
             'entity_id' => $change['entity_id'],
             'change_id' => $change['id'],
-            'origin_device' => $change['origin_device'] ?? $device->device_code,
+            'origin_device' => $originDevice,
             'incoming_base_version' => $change['base_version'],
             'current_version' => $row->getVersion(),
             'incoming_payload' => json_encode($change['payload'], JSON_UNESCAPED_UNICODE),
             'current_payload' => json_encode($row->toWirePayload(), JSON_UNESCAPED_UNICODE),
-            'status' => 'unresolved',
+            'winner' => $resolution['winner'],
+            'clock_suspect' => $resolution['clock_suspect'],
+            'incoming_op' => $change['op'],
+            'current_was_deleted' => $row->trashed(),
+            'status' => 'resolved',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        return [
-            'id' => $change['id'],
-            'entity_id' => $change['entity_id'],
-            'outcome' => 'conflict',
-            'row' => $row->toWirePayload(), // A7 — client's next edit gets a current base_version
-            'version' => $row->getVersion(),
-        ];
+        if ($resolution['winner'] === 'current') {
+            return [
+                'id' => $change['id'],
+                'entity_id' => $change['entity_id'],
+                'outcome' => 'conflict',
+                'row' => $row->toWirePayload(), // A7 — client's next edit gets a current base_version
+                'version' => $row->getVersion(),
+            ];
+        }
+
+        try {
+            $validated = $change['op'] === 'delete'
+                ? []
+                : CustomerRequest::validatePayload($change['payload'], $change['op']);
+        } catch (ValidationException $e) {
+            // Won the resolution but failed validation — a genuine edge
+            // case; reject rather than apply bad data just because the
+            // timestamp said so.
+            return [
+                'id' => $change['id'],
+                'entity_id' => $change['entity_id'],
+                'outcome' => 'rejected',
+                'errors' => $e->errors(),
+            ];
+        }
+
+        return $this->applyValidated($change, $modelClass, $row, $validated, $originDevice);
     }
 }
