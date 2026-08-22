@@ -18,7 +18,7 @@ class CustomerFactory extends Factory
      */
     public function definition(): array
     {
-        return [
+        $attributes = [
             'name' => fake()->company(),
             'email' => fake()->unique()->safeEmail(),
             'phone' => fake()->phoneNumber(),
@@ -27,5 +27,15 @@ class CustomerFactory extends Factory
             'status' => 'active',
             'owner_user_id' => User::factory(),
         ];
+
+        // Local mode's Customer::booted() generates one via DeviceIdentity;
+        // cloud mode has no device to generate one from, so a direct create
+        // (not through push, where the client already supplied it) needs
+        // the factory to provide it explicitly.
+        if (sync_is_cloud()) {
+            $attributes['code'] = 'CUST-TEST-'.fake()->unique()->numerify('######');
+        }
+
+        return $attributes;
     }
 }

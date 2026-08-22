@@ -9,7 +9,7 @@ namespace App\Sync\Scopes;
  * work; this class exists now so config/sync.php's entity registry has
  * something real to reference instead of a dangling class-string.
  */
-class OwnerScope
+class OwnerScope implements ScopeDefinition
 {
     public function column(): string
     {

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Sync\CodeGenerator;
 use App\Sync\Syncable;
+use App\Sync\SyncableModel;
 use Database\Factories\CustomerFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -28,7 +29,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $deleted_at
  */
 #[Fillable(['code', 'name', 'email', 'phone', 'city', 'notes', 'status', 'owner_user_id'])]
-class Customer extends Model
+class Customer extends Model implements SyncableModel
 {
     /** @use HasFactory<CustomerFactory> */
     use HasFactory, HasUuids, SoftDeletes, Syncable;
@@ -38,7 +39,14 @@ class Customer extends Model
     protected static function booted(): void
     {
         static::creating(function (Customer $customer) {
-            $customer->code ??= CodeGenerator::next(self::CODE_PREFIX);
+            // Local-only: CodeGenerator needs DeviceIdentity::id(), which
+            // throws in cloud mode. A cloud-side create always has a code
+            // already — from the push payload (the client generated it) or
+            // an explicit value a caller supplied; there's no server-side
+            // device to generate one from.
+            if (sync_is_local() && ! $customer->code) {
+                $customer->code = CodeGenerator::next(self::CODE_PREFIX);
+            }
             // The migration's default(1) is a DB-side default only — Eloquent
             // never re-fetches after insert for a UUID (non-autoincrement)
             // key, so without this the in-memory model's version stays null

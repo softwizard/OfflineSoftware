@@ -34,6 +34,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Schema Version
+    |--------------------------------------------------------------------------
+    |
+    | Sent by every local client as X-Sync-Schema-Version; the server
+    | rejects a client older than min_supported_schema_version with
+    | 409 schema_outdated (App\Http\Middleware\EnforceSchemaVersion). Only
+    | version 1 exists so far — S6-06's schema-bump procedure (additive
+    | -only, N-2 support) is what will ever widen the gap between these two.
+    |
+    */
+
+    'schema_version' => 1,
+    'min_supported_schema_version' => 1,
+
+    /*
+    |--------------------------------------------------------------------------
     | Entity Registry
     |--------------------------------------------------------------------------
     |
