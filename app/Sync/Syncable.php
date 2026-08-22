@@ -65,8 +65,28 @@ trait Syncable
             }
         });
 
-        static::deleting(function () {
+        static::deleting(function ($model) {
             static::guardOfflineLock();
+
+            // A soft delete never reaches static::updating above — Laravel's
+            // SoftDeletes::runSoftDelete() persists deleted_at via a direct
+            // query builder update() call, not save(), so it fires
+            // deleting/deleted but never updating/updated at all. Found via
+            // S8-03's chaos scenario S05 (delete-vs-concurrent-update),
+            // not by inspection: without this, a cloud-side delete left
+            // version completely unchanged, so a concurrently-pushed
+            // update's base_version check never detected anything had
+            // happened and applied right over the delete — invisibly,
+            // with no conflict ever recorded. saveQuietly() (not a second
+            // creating/updating/deleting cycle) persists just this bump;
+            // runSoftDelete()'s own update() call handles deleted_at right
+            // after.
+            if (sync_is_cloud()) {
+                $model->version = ($model->getOriginal('version') ?? 0) + 1;
+                $model->last_client_updated_at = SyncContext::clientUpdatedAt();
+                $model->last_origin_device = SyncContext::originDevice();
+                $model->saveQuietly();
+            }
         });
 
         static::created(function ($model) {

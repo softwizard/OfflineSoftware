@@ -122,6 +122,48 @@ return [
             // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
 
+        /*
+        |----------------------------------------------------------------
+        | Chaos suite test connections (S8-01, build-plan_1.md §3.7)
+        |----------------------------------------------------------------
+        |
+        | Four genuinely separate SQLite :memory: databases, coexisting
+        | simultaneously — one server, three devices (device_c exists
+        | solely for S18's three-way conflict scenario). Never connected
+        | to outside tests. Each named connection gets its own PDO /
+        | RefreshDatabaseState cache entry, which is the whole point:
+        | switching *which* one is "current" (Tests\Feature\Sync\
+        | MultiDeviceTestCase::withContext) never risks the schema
+        | -survives-a-mode-switch bug Sprint 7 found in the single
+        | -connection, config-toggled CloudTestCase approach it
+        | supersedes for multi-device scenarios.
+        |
+        */
+
+        'server' => [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'foreign_key_constraints' => true,
+        ],
+
+        'device_a' => [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'foreign_key_constraints' => true,
+        ],
+
+        'device_b' => [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'foreign_key_constraints' => true,
+        ],
+
+        'device_c' => [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'foreign_key_constraints' => true,
+        ],
+
     ],
 
     /*
