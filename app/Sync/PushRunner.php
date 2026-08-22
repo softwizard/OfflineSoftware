@@ -45,7 +45,13 @@ class PushRunner
 
         $changesById = $wire->keyBy('id');
 
-        $response = $this->api->push($wire->all()); // throws on transport failure — nothing above has mutated anything yet
+        // Observational only (see the migration) — bumped before the call
+        // so even a transport failure below still counts as an attempt,
+        // deliberately not part of the "nothing written until a
+        // successful response" guarantee the rest of this method keeps.
+        DB::table('sync_changes')->whereIn('id', $wire->pluck('id'))->increment('attempts');
+
+        $response = $this->api->push($wire->all()); // throws on transport failure — nothing else above has mutated anything yet
 
         foreach ($response['results'] as $result) {
             $original = $changesById->get($result['id']);

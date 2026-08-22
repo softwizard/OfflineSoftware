@@ -65,6 +65,11 @@ class SyncRunner
             $pulled = $this->pullRunner->run();
 
             $this->finish($runId, 'success', null, null, $pushed, $pulled);
+
+            // S5-03's status bar reads this — set here, not anywhere in
+            // PullRunner, since "last success" means a full cycle
+            // completed, not just that one stage happened to finish.
+            DB::table('sync_state')->where('id', 1)->update(['last_success_at' => now()]);
         } catch (Throwable $e) {
             $this->finish($runId, 'failed', $stage, $e->getMessage());
         }

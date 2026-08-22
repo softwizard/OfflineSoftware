@@ -103,7 +103,8 @@ class PushRunnerTest extends TestCase
         }
 
         $row = DB::table('sync_changes')->first();
-        $this->assertSame('pending', $row->status, 'a transport failure must not touch the outbox at all');
+        $this->assertSame('pending', $row->status, 'a transport failure must not touch the outbox status/payload');
+        $this->assertSame(1, $row->attempts, 'attempts is a deliberate carve-out — it still counts even when nothing else is touched');
     }
 
     public function test_retry_after_a_transport_failure_creates_no_duplicate_server_side_state(): void

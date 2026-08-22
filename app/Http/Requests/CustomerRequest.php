@@ -52,6 +52,25 @@ class CustomerRequest extends FormRequest
     }
 
     /**
+     * The subset the Livewire customer form actually collects — 'code'
+     * and 'owner_user_id' are set programmatically (generated / the
+     * logged-in user), never form fields, and the form always submits a
+     * complete set of the fields it does own rather than a wire-protocol
+     * partial diff, so 'name' stays required regardless of create/edit.
+     * Same field-level rules either way (S2-10's actual point — email
+     * format, max lengths, the status enum are defined once and reused,
+     * not duplicated) — just a different shape.
+     *
+     * @return array<string, mixed>
+     */
+    public function rulesForForm(): array
+    {
+        return collect($this->rulesFor('create'))
+            ->only(['name', 'email', 'phone', 'city', 'notes', 'status'])
+            ->all();
+    }
+
+    /**
      * Validate a raw wire payload — the same rules, applied to data that
      * didn't arrive as $_POST fields.
      *

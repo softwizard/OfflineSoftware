@@ -16,6 +16,15 @@
                         {{ __('Dashboard') }}
                     </flux:sidebar.item>
 
+                    @if (sync_is_local())
+                        <flux:sidebar.item icon="layout-grid" :href="route('customers.index')" :current="request()->routeIs('customers.index')" wire:navigate>
+                            {{ __('Customers') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="layout-grid" :href="route('sync.status')" :current="request()->routeIs('sync.status')" wire:navigate>
+                            {{ __('Sync') }}
+                        </flux:sidebar.item>
+                    @endif
+
                     @if (sync_is_cloud())
                         <flux:sidebar.item icon="layout-grid" :href="route('sync.conflicts')" :current="request()->routeIs('sync.conflicts')" wire:navigate>
                             {{ __('Sync Conflicts') }}
@@ -93,6 +102,10 @@
                 </flux:menu>
             </flux:dropdown>
         </flux:header>
+
+        @if (sync_is_local())
+            <livewire:sync.status-bar />
+        @endif
 
         {{ $slot }}
 

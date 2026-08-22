@@ -62,6 +62,25 @@ class SyncRunnerTest extends TestCase
         $this->assertNotNull($run->finished_at);
     }
 
+    public function test_a_full_success_updates_sync_states_last_success_at(): void
+    {
+        $this->assertNull(DB::table('sync_state')->where('id', 1)->value('last_success_at'));
+
+        $this->fakeHappyPath();
+        app(SyncRunner::class)->run();
+
+        $this->assertNotNull(DB::table('sync_state')->where('id', 1)->value('last_success_at'));
+    }
+
+    public function test_an_offline_run_does_not_update_last_success_at(): void
+    {
+        Http::fake(fn () => Http::response('', 500));
+
+        app(SyncRunner::class)->run();
+
+        $this->assertNull(DB::table('sync_state')->where('id', 1)->value('last_success_at'));
+    }
+
     public function test_when_offline_it_logs_offline_and_never_calls_handshake(): void
     {
         Http::fake(fn () => Http::response('', 500));

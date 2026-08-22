@@ -59,4 +59,28 @@ class CustomerRequestTest extends TestCase
 
         $this->assertSame($request->rulesFor('create'), $request->rules());
     }
+
+    public function test_form_rules_exclude_code_and_owner_user_id(): void
+    {
+        $rules = (new CustomerRequest)->rulesForForm();
+
+        $this->assertArrayNotHasKey('code', $rules);
+        $this->assertArrayNotHasKey('owner_user_id', $rules);
+        $this->assertArrayHasKey('name', $rules);
+    }
+
+    public function test_form_rules_keep_name_required(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        validator([], (new CustomerRequest)->rulesForForm())->validate();
+    }
+
+    public function test_form_rules_share_the_same_email_format_rule_as_the_wire_payload(): void
+    {
+        $this->assertSame(
+            (new CustomerRequest)->rulesFor('create')['email'],
+            (new CustomerRequest)->rulesForForm()['email'],
+        );
+    }
 }
