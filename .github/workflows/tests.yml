@@ -25,6 +25,10 @@ jobs:
           php-version: '8.3'
           tools: composer:v2
           coverage: none
+          # nativephp/desktop (S7-01) requires ext-zip to install at all —
+          # explicit rather than relying on whatever this action's default
+          # extension set happens to include.
+          extensions: zip
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
