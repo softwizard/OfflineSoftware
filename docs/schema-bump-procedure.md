@@ -77,6 +77,25 @@ corrupting data they can no longer parse correctly.
   optional scaffolding; it's the actual N-2 support guarantee. Without it,
   step 1's clients are already broken.
 
+## Push transaction scope: per-change, not per-batch
+
+build-plan_1.md specified one transaction per push *batch*.
+`App\Http\Controllers\Sync\PushController::processChange()` gives each
+change its own instead — the deliberate deviation is recorded on
+`store()`'s docblock, not just here. It's what makes the partial-success
+response (`applied` / `conflict` / `rejected` per change) meaningful: one
+poisoned change in a batch of 200 can't roll back the other 199, which is
+the right call as long as every syncable entity stands alone.
+
+**This stops being the right call the moment a multi-table relationship
+arrives** — a child row pushed in the same batch as its new parent needs
+both to commit together, or the child gets rejected for a missing foreign
+key and the batch half-lands with the parent applied and the child lost.
+Revisit per-batch transactions (grouped by whatever dependency ordering
+the new relationship needs) at that point, not before — see
+build-plan_1.md §7's own "not in scope for v1" list, which already rules
+out multi-table FK ordering on push for exactly this reason.
+
 ## Why LogWriter re-emits the full row, not a diff
 
 `App\Sync\Syncable::logSyncChange()` always sends `fullCanonicalPayload()`

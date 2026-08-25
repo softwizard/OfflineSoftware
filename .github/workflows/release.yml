@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to attach build artifacts to the GitHub Release
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+          coverage: none
+          # nativephp/desktop (S7-01) requires ext-zip to install at all.
+          extensions: zip
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Install JS dependencies and build assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure environment
+        shell: bash
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+          # F3 — APP_MODE has no default; a packaged desktop build is
+          # always a local-mode (laptop) install.
+          echo "APP_MODE=local" >> .env
+          echo "SYNC_DEVICE_ID=BUILD" >> .env
+          echo "NATIVEPHP_APP_VERSION=${GITHUB_REF_NAME#v}" >> .env
+          echo "NATIVEPHP_APP_ID=${{ vars.NATIVEPHP_APP_ID }}" >> .env
+          echo "NATIVEPHP_APP_AUTHOR=${{ vars.NATIVEPHP_APP_AUTHOR }}" >> .env
+          echo "NATIVEPHP_APP_WEBSITE=${{ vars.NATIVEPHP_APP_WEBSITE }}" >> .env
+          echo "GITHUB_OWNER=${{ github.repository_owner }}" >> .env
+          echo "GITHUB_REPO=${{ github.event.repository.name }}" >> .env
+          echo "GITHUB_TOKEN=${{ secrets.GH_RELEASE_TOKEN }}" >> .env
+
+      # S7-04 — Microsoft Artifact Signing (Trusted Signing). Read from
+      # repository secrets only; never committed. config/nativephp.php's
+      # azure_trusted_signing block (published from the package default)
+      # is what actually consumes these via NativeAppServiceProvider's
+      # build environment — see vendor/nativephp/desktop/src/Drivers/
+      # Electron/Commands/BuildCommand.php::getEnvironmentVariables().
+      - name: Build and publish the Windows installer
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          NATIVEPHP_AZURE_PUBLISHER_NAME: ${{ secrets.NATIVEPHP_AZURE_PUBLISHER_NAME }}
+          NATIVEPHP_AZURE_ENDPOINT: ${{ secrets.NATIVEPHP_AZURE_ENDPOINT }}
+          NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME }}
+          NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+        # The exact command and flags, confirmed by reading the installed
+        # package's own source (vendor/nativephp/desktop/src/Drivers/
+        # Electron/Commands/BuildCommand.php) rather than guessed —
+        # `--publish` is what makes electron-builder push to the
+        # updater.default = 'github' target (config/nativephp.php),
+        # authenticated via GH_TOKEN, which NativePHP itself derives from
+        # GITHUB_TOKEN in .env (see Updater\GitHubProvider::environmentVariables()).
+        run: php artisan native:build win x64 --publish --no-interaction

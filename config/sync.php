@@ -15,9 +15,15 @@ return [
     | 'cloud'  — the server install. Never records to an outbox; it is the
     |             canonical store other devices pull from.
     |
+    | F3 — deliberately no default. A server that boots in local mode
+    | keeps an outbox instead of writing the canonical sync_log, and every
+    | device would silently stop receiving changes — the failure mode for
+    | a missing/wrong APP_MODE must be loud and immediate
+    | (SyncServiceProvider::boot()), not a quiet fallback to 'local'.
+    |
     */
 
-    'mode' => env('APP_MODE', 'local'),
+    'mode' => env('APP_MODE'),
 
     /*
     |--------------------------------------------------------------------------

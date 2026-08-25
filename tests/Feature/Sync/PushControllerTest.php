@@ -2,10 +2,13 @@
 
 namespace Tests\Feature\Sync;
 
+use App\Http\Controllers\Sync\PushController;
 use App\Models\Customer;
 use App\Models\Device;
 use App\Models\User;
 use App\Sync\SyncTime;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
@@ -210,5 +213,93 @@ class PushControllerTest extends CloudTestCase
 
         $response->assertJsonPath('results.0.outcome', 'applied');
         $this->assertSoftDeleted($customer);
+    }
+
+    /**
+     * F1 — the receipt guard (A4) and the receipt insert aren't atomic
+     * with each other: two genuinely concurrent requests for the same
+     * change_id can both miss the guard, both enter their own
+     * transaction, and only one can win the sync_receipts primary key.
+     * The loser's whole transaction rolls back (nothing is ever applied
+     * twice) — but it must return the winner's stored outcome, not a 500.
+     *
+     * True concurrent-connection timing isn't reliably reproducible in a
+     * single-process test, so this stands in for the race at exactly one
+     * point — PushController::existingReceipt()'s *first* call (the
+     * guard) is made to report a miss while a receipt search a moment
+     * later (during recovery) will not — everything else is genuine,
+     * unmocked behavior: the real customer insert this triggers, the
+     * real sync_receipts unique-constraint violation, and the real
+     * recovery query.
+     */
+    public function test_a_concurrent_duplicate_push_replays_the_receipt_instead_of_erroring(): void
+    {
+        [$device, $owner, $token] = $this->authedDevice();
+        $change = $this->createChange($device, $owner);
+
+        $winningResult = [
+            'id' => $change['id'],
+            'entity_id' => $change['entity_id'],
+            'outcome' => 'applied',
+            'row' => $change['payload'],
+            'version' => 1,
+        ];
+
+        $controller = new class($winningResult) extends PushController
+        {
+            private bool $guardChecked = false;
+
+            public function __construct(private array $winningResult) {}
+
+            protected function existingReceipt(string $changeId): ?array
+            {
+                if (! $this->guardChecked) {
+                    $this->guardChecked = true;
+
+                    // The moment this request's own guard check misses,
+                    // a genuinely concurrent request for the exact same
+                    // change_id wins the race and commits first.
+                    DB::table('sync_receipts')->insert([
+                        'change_id' => $changeId,
+                        'entity' => 'customer',
+                        'entity_id' => $this->winningResult['entity_id'],
+                        'outcome' => 'applied',
+                        'response_payload' => json_encode($this->winningResult, JSON_UNESCAPED_UNICODE),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    return null;
+                }
+
+                return parent::existingReceipt($changeId);
+            }
+        };
+
+        $device->forceFill(['last_seen_at' => now()])->save();
+        $request = Request::create('/api/sync/push', 'POST', ['changes' => [$change]]);
+        $request->attributes->set('device', $device);
+
+        $response = $controller->store($request);
+
+        $this->assertSame($winningResult, $response->getData(true)['results'][0]);
+        $this->assertSame(1, DB::table('sync_receipts')->count(), 'the losing transaction must not leave a second receipt behind');
+        $this->assertSame(0, Customer::count(), 'the losing transaction rolled back in full — nothing was applied twice');
+    }
+
+    public function test_a_unique_constraint_violation_unrelated_to_the_receipt_race_still_throws(): void
+    {
+        [$device, $owner, $token] = $this->authedDevice();
+        Customer::create(['code' => 'CUST-DUP-000001', 'name' => 'Existing', 'owner_user_id' => $owner->id]);
+
+        $change = $this->createChange($device, $owner);
+        $change['payload']['code'] = 'CUST-DUP-000001'; // collides with the row above, not with any receipt
+
+        $request = Request::create('/api/sync/push', 'POST', ['changes' => [$change]]);
+        $request->attributes->set('device', $device);
+
+        $this->expectException(UniqueConstraintViolationException::class);
+
+        app(PushController::class)->store($request);
     }
 }

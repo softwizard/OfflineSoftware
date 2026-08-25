@@ -13,7 +13,7 @@ unattended. This document is the handoff for those three.
 | S7-02 | `App\Sync\LocalDatabasePath::assertNotOneDriveRedirected()`, called from `SyncServiceProvider::boot()` in local mode. Compares `%LOCALAPPDATA%` against the `OneDrive`/`OneDriveCommercial`/`OneDriveConsumer` env vars Windows sets when OneDrive is installed; throws `App\Sync\OneDriveRedirectionException` if redirected. Tested in `tests/Feature/LocalDatabasePathTest.php` with both simulated redirection and this real machine's genuine (healthy, non-redirected) OneDrive configuration. |
 | S7-03 | `App\Providers\NativeAppServiceProvider::boot()` starts `schedule:work` as a persistent child process (`Native\Desktop\Facades\ChildProcess::artisan(['schedule:work'], 'scheduler', persistent: true)`) — the same pattern NativePHP's own `QueueWorker::up()` uses for queue workers. This is what keeps `routes/console.php`'s `Schedule::command('sync:run')->everyFiveMinutes()` firing with no Windows Task Scheduler entry and no OS cron. Tested in `tests/Feature/NativeAppServiceProviderTest.php` via NativePHP's first-party fakes. |
 
-### A real compatibility issue found and fixed along the way
+### Two real compatibility issues found and fixed along the way
 
 `nativephp/desktop` 2.2.1's `NativeServiceProvider`, when active during
 `php artisan test`, corrupts this project's `CloudTestCase` mechanism
@@ -25,18 +25,37 @@ failure down to a minimal repro (`BackoffTest` immediately followed by
 `CloudBootSmokeTest`), not by inspection — confirmed by excluding the
 provider from package discovery and watching the failure disappear.
 
-Fixed by opting `nativephp/desktop` out of Laravel's auto-discovery
-(`composer.json`'s `extra.laravel.dont-discover`) and registering
-`Native\Desktop\NativeServiceProvider` manually in
-`bootstrap/providers.php`, conditioned on `env('APP_ENV') !== 'testing'`.
-Real desktop packaging and NativePHP's own artisan commands
-(`native:install`, `native:run`, `native:dev`) are unaffected — none of
-those run under `APP_ENV=testing`. See the comment in
-`bootstrap/providers.php` for the full reasoning.
+Separately: `Native\Desktop\Commands\FreshCommand` and `MigrateCommand`
+each declare their command name twice (a `#[AsCommand]` attribute *and*
+a `protected $name` property override) — enough to make Symfony
+Console's full command-list resolution throw "registered under multiple
+names" the instant anything enumerates every registered command.
+`php artisan list` hits this directly; `php artisan tinker` hits it
+internally (it builds its own PsySH command list from every artisan
+command) — so with the provider active outside tests too, two everyday
+dev tools were simply broken. Found by trying to actually use the app
+after Sprint 8, not by inspection.
 
-This is very likely why `nativephp/desktop`'s repository has an
-unreleased `dev-l13-compatibility` branch (seen in `composer show -a
-nativephp/desktop` at the time of writing) — 2.2.1 is the latest tagged
+Both fixed the same way: `nativephp/desktop` is opted out of Laravel's
+auto-discovery (`composer.json`'s `extra.laravel.dont-discover`) and
+`Native\Desktop\NativeServiceProvider` is registered manually in
+`bootstrap/providers.php`, only when something actually needs it — a
+`native:*` artisan command is being invoked (covers `native:install`,
+`native:run`, `native:dev`, and `php artisan help native:install`), the
+packaged app's own runtime is running it (`NATIVEPHP_RUNNING`, set by
+that runtime itself), or never under `APP_ENV=testing`. Everything else
+— `tinker`, `list`, `migrate`, `serve`, `route:list`, the test suite —
+now boots without the provider at all, so neither bug has anything to
+trigger on. See the comment in `bootstrap/providers.php` for the full
+reasoning.
+
+Tried switching to the package's unreleased `dev-l13-compatibility`
+branch first, in case it already fixed this properly upstream — it
+doesn't resolve for this project's actual dependency tree at all
+(`symfony/finder`/`symfony/filesystem` version conflicts with what
+Laravel 13 itself requires, confirmed via `composer require ... --dry-run
+--with-all-dependencies`, which composer safely rejected without
+touching anything). 2.2.1 remains the latest genuinely installable
 release and predates full Laravel 13 support. Worth re-checking whether
 a newer tagged release resolves this cleanly before the real signed
 build, rather than carrying this workaround indefinitely.
@@ -57,6 +76,25 @@ once rather than iterating on it live.
 
 ## Needs you (S7-04 – S7-06)
 
+### The release workflow now exists — `.github/workflows/release.yml`
+
+Triggered on pushing a `v*` tag; builds on `windows-latest`, installs
+PHP/Node/composer/npm dependencies, and runs
+`php artisan native:build win x64 --publish`. That exact command and its
+flags were **confirmed by reading the installed package's own source**
+(`vendor/nativephp/desktop/src/Drivers/Electron/Commands/
+BuildCommand.php` and `PublishCommand.php`), not guessed — `php artisan
+list native` itself can't be used to check this the normal way, because
+it hits the exact same "registered under multiple names" bug the
+`bootstrap/providers.php` fix above works around (enumerating commands,
+which `list` always does even namespace-filtered, is exactly what
+triggers it).
+
+The workflow reads all signing/publishing credentials from GitHub
+Actions **repository secrets** — nothing is hardcoded, nothing is
+committed. What's actually still needed is the credentials themselves
+and a real run:
+
 ### S7-04 — Microsoft Artifact Signing (~$10/mo)
 
 **Blocked on:** an Azure/Microsoft billing decision. Not something to
@@ -70,31 +108,28 @@ set up speculatively.
 2. Create a Trusted Signing account + a certificate profile (public
    trust, "Public Trust" profile type for a real installer distributed
    outside the org, not "Private Trust").
-3. `config/nativephp.php`'s `azure_trusted_signing` block already has the
-   env keys wired up (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
-   `AZURE_CLIENT_SECRET`, `NATIVEPHP_AZURE_PUBLISHER_NAME`,
-   `NATIVEPHP_AZURE_ENDPOINT`, `NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME`,
-   `NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME`) — fill them into `.env`
-   once the Trusted Signing account exists; nothing else in the app
-   needs to change.
-4. Add those same values as **CI secrets** (GitHub Actions repository
-   secrets, or whatever CI this project ends up on) — signing has to
-   happen in CI on every release build, not by hand on someone's laptop,
-   or "signed on every release build" (the plan's actual "done when")
-   silently stops being true the first time someone forgets.
-5. First real test: build the installer once with signing configured and
-   confirm Windows SmartScreen doesn't flag it, and `signtool verify
-   /pa` (or the NSIS-equivalent check) reports a valid signature.
+3. Add these as **GitHub Actions repository secrets** — the workflow
+   already reads them, nothing else needs to change:
+   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+   `NATIVEPHP_AZURE_PUBLISHER_NAME`, `NATIVEPHP_AZURE_ENDPOINT`,
+   `NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME`,
+   `NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME`.
+4. First real test: push a tag, let the workflow build the installer
+   with signing configured, and confirm Windows SmartScreen doesn't flag
+   it, and `signtool verify /pa` (or the NSIS-equivalent check) reports a
+   valid signature.
 
 ### S7-05 — GitHub Releases + updater
 
 **Blocked on:** the project having a real GitHub remote with release
 permissions, which isn't something to assume exists or push to
-speculatively.
+speculatively — this repo currently has **no remote configured at all**
+(found during the post-Sprint-8 audit), so neither `tests.yml` nor this
+new `release.yml` has ever actually run.
 
 `config/nativephp.php`'s updater is already pointed at `'github'`
 (changed from the package's own default of DigitalOcean Spaces — see
-this sprint's commit). What's left:
+Sprint 7's commit). What's left:
 
 1. Confirm the GitHub repo this project will actually ship releases
    from (push access, and decide public vs. private — `GITHUB_PRIVATE`
@@ -102,8 +137,14 @@ this sprint's commit). What's left:
    `GITHUB_AUTOUPDATE_TOKEN` set to a read-only PAT so installed clients
    can check for updates without a full-access token sitting on every
    laptop).
-2. Set `GITHUB_OWNER` / `GITHUB_REPO` / `GITHUB_TOKEN` in `.env` (and as
-   CI secrets for the release build itself).
+2. Add a **repository secret** named `GH_RELEASE_TOKEN` (a PAT with
+   `contents: write` on this repo — `release.yml` reads it as
+   `GITHUB_TOKEN` inside the build) and **repository variables**
+   `NATIVEPHP_APP_ID` / `NATIVEPHP_APP_AUTHOR` / `NATIVEPHP_APP_WEBSITE`
+   (the real branding decided before the first real build — see "App
+   identity" above). `GITHUB_OWNER`/`GITHUB_REPO` are derived
+   automatically from the repository itself in the workflow; no need to
+   set those by hand.
 3. Decide `GITHUB_RELEASE_TYPE` — `.env.example` doesn't override the
    package default (`draft`); `draft` means a release doesn't go live
    for the updater until someone manually publishes it on GitHub, which

@@ -10,6 +10,7 @@ use App\Sync\SyncableModel;
 use App\Sync\SyncContext;
 use App\Sync\SyncRegistry;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,20 @@ use Illuminate\Validation\ValidationException;
 
 class PushController extends Controller
 {
+    /**
+     * F4 — deliberate deviation from build-plan_1.md, which specified one
+     * transaction per *batch*. Each change here gets its own instead
+     * (processChange()), which is what makes the partial-success response
+     * (applied / conflict / rejected per change) meaningful: one poisoned
+     * change in a batch of 200 can't roll back the other 199. Right call
+     * for a single-entity system.
+     *
+     * It stops being the right call the day multi-table FK ordering
+     * arrives (a child row pushed alongside its parent needs both to
+     * commit together, or the child is rejected for a missing foreign
+     * key and the batch half-lands) — see docs/schema-bump-procedure.md's
+     * multi-entity note. Revisit per-batch transactions then, not before.
+     */
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -51,25 +66,50 @@ class PushController extends Controller
         // A4, checked first: a replayed change returns its original outcome
         // verbatim, never reprocessed — that's what makes a lost response
         // safe to retry instead of producing a phantom conflict (S07).
-        if ($existing = DB::table('sync_receipts')->where('change_id', $change['id'])->first()) {
-            return json_decode($existing->response_payload, true);
+        if ($existing = $this->existingReceipt($change['id'])) {
+            return $existing;
         }
 
-        return DB::transaction(function () use ($change, $device) {
-            $result = $this->applyChange($change, $device);
+        try {
+            return DB::transaction(function () use ($change, $device) {
+                $result = $this->applyChange($change, $device);
 
-            DB::table('sync_receipts')->insert([
-                'change_id' => $change['id'],
-                'entity' => $change['entity'],
-                'entity_id' => $change['entity_id'],
-                'outcome' => $result['outcome'],
-                'response_payload' => json_encode($result, JSON_UNESCAPED_UNICODE),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+                DB::table('sync_receipts')->insert([
+                    'change_id' => $change['id'],
+                    'entity' => $change['entity'],
+                    'entity_id' => $change['entity_id'],
+                    'outcome' => $result['outcome'],
+                    'response_payload' => json_encode($result, JSON_UNESCAPED_UNICODE),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
 
-            return $result;
-        });
+                return $result;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            // The check above and the receipt insert above aren't atomic
+            // with each other — a genuinely concurrent retry of the same
+            // change_id can miss the check on both requests, then have
+            // one of them lose the race on sync_receipts' primary key (or
+            // on whatever else the apply itself touches) once the other
+            // commits first. That losing transaction has now rolled back
+            // in full — nothing was applied twice — so the correct answer
+            // is the winner's now-committed receipt, exactly what a
+            // sequential replay would have returned (A4). If no receipt
+            // is there, the violation came from something else entirely
+            // (customers.code, say) and is a real error.
+            return $this->existingReceipt($change['id']) ?? throw $e;
+        }
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    protected function existingReceipt(string $changeId): ?array
+    {
+        $row = DB::table('sync_receipts')->where('change_id', $changeId)->first();
+
+        return $row ? json_decode($row->response_payload, true) : null;
     }
 
     /**
@@ -105,7 +145,15 @@ class PushController extends Controller
             return $result + ['outcome' => 'rejected', 'errors' => ['entity_id' => 'no such record']];
         }
 
-        $originDevice = $change['origin_device'] ?? $device->device_code;
+        // F5 — always the authenticated device, never a client-supplied
+        // field: origin_device is the tiebreak in LWW conflict resolution
+        // (ConflictResolver), so it has to come from the Sanctum token,
+        // not from anything the request body could claim. (There was
+        // previously a `$change['origin_device'] ?? ...` fallback here,
+        // but 'origin_device' has never been in store()'s validation
+        // rules — Request::validate() only returns validated fields, so
+        // that key can never actually be present; the fallback was dead.)
+        $originDevice = $device->device_code;
 
         if ($change['op'] !== 'create' && (int) $change['base_version'] !== $row->getVersion()) {
             return $this->resolveConflict($change, $modelClass, $row, $originDevice);
